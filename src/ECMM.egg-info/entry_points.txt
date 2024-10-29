@@ -1,0 +1,3 @@
+[console_scripts]
+evaluate = evaluate:main
+train = train:main
