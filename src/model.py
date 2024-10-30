@@ -17,7 +17,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class ECT(nn.Module):
     def __init__(
-        self, model_name, output_dim, num_blocks, dropout_rate=0.1
+        self, model_name, output_dim, num_blocks, n_head, dropout_rate=0.1
     ):
         super().__init__()
         self.model_name = model_name
@@ -43,7 +43,7 @@ class ECT(nn.Module):
         self.num_blocks = num_blocks
         self.output_dim = output_dim
         self.dropout_rate = dropout_rate
-
+        self.n_head = n_head
         # ========
         # layers
         self.layer_norm = nn.LayerNorm(self.embed_dim).to(
@@ -56,32 +56,26 @@ class ECT(nn.Module):
         # blocks
         self.transformer_blocks = nn.ModuleList(
             [
-                TransBlock(self.model_name, self.embed_dim, r_ff=4, p_drop=dropout_rate, n_head=20).to(device)
+                TransBlock(self.model_name, self.n_head, r_ff=4, p_drop=dropout_rate).to(device)
                 for _ in range(self.num_blocks)
             ]
         )
 
-    def forward(self, fasta_embeds):
-        batch_size = len(fasta_embeds)
-        prot_embeds = []
-        for fasta_embed in fasta_embeds:
-            fasta_embed.to(device)
-            prot_embeds.append(fasta_embed)
-       
-        x = torch.stack(prot_embeds, dim=0)  
+    def forward(self, fasta_embeds, dm_embeds):
+        x = fasta_embeds
+        y = dm_embeds
         if torch.isnan(x).any():
             print("NaNs detected after pad_and_stack")
         for transformer_block in self.transformer_blocks:
-            x = transformer_block(x)
-        if torch.isnan(x).any():
+            z = transformer_block(x, y)
+        if torch.isnan(z).any():
             print("NaNs detected after transformer")            
-        x = self.layer_norm(x)
+        z = self.layer_norm(z)
         if torch.isnan(x).any():
             print("NaNs detected after layer_norm")
-        x = x.mean(dim=1)
-        x = self.class_fc(x)  # x shape: [batch_size, output_dim]
-        x = F.softmax(x, dim=-1)
-        return x
+        z = z.mean(dim=1)
+        z = self.class_fc(z)  # x shape: [batch_size, output_dim]
+        return z
 
 
 #    def pad_and_stack(self, prot_embeds):

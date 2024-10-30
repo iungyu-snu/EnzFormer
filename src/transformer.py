@@ -35,7 +35,7 @@ class FeedForwardLayer(nn.Module):
         x = F.relu_(x)
         x = self.dropout1(x)
         x = self.linear2(x)
-        x = self.dropout2(x)  # Optional: Apply dropout here
+        x = self.dropout2(x) 
         return x
 
 
@@ -52,9 +52,10 @@ class Attention(nn.Module):
         self.to_out = nn.Linear(n_head * d_hidden, d_query)  # Assuming output dim is same as input dim
 
         self.scaling = 1 / math.sqrt(d_hidden)
+    
         self.attn_dropout = nn.Dropout(p_drop)
         self.out_dropout = nn.Dropout(p_drop)
-
+        
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -64,7 +65,7 @@ class Attention(nn.Module):
         nn.init.xavier_uniform_(self.to_out.weight)
         nn.init.zeros_(self.to_out.bias)
 
-    def forward(self, query, key, value):
+    def forward(self, query, key, value, dm_embeds):
         B, Q = query.shape[:2]
         B, K = key.shape[:2]
 
@@ -74,20 +75,25 @@ class Attention(nn.Module):
 
         query_proj = query_proj * self.scaling
         attn_scores = torch.einsum('bqhd,bkhd->bhqk', query_proj, key_proj)
+
+        # =====
+
+        dm_embeds = dm_embeds.unsqueeze(1).repeat(1, self.h, 1, 1)
+        # Adding pair bias to attention scores
+        attn_scores = attn_scores + dm_embeds
         attn_weights = F.softmax(attn_scores, dim=-1)
-        attn_weights = self.attn_dropout(attn_weights)  # Apply attention dropout
+        attn_weights = self.attn_dropout(attn_weights)  
 
         attn_output = torch.einsum('bhqk,bkhd->bqhd', attn_weights, value_proj)
         attn_output = attn_output.reshape(B, Q, self.h * self.dim)
         attn_output = self.to_out(attn_output)
-        attn_output = self.out_dropout(attn_output)  # Apply output dropout
+        attn_output = self.out_dropout(attn_output) 
 
         return attn_output
 
 class TransBlock(nn.Module):
-    def __init__(self, model_name, d_out, r_ff=4, p_drop=0, n_head=4):
+    def __init__(self, model_name, n_head, r_ff=4, p_drop=0):
         super().__init__()
-        # Determine embedding dimensions based on model_location
         if model_name == "15B":
             self.embed_dim = 5120
         elif model_name == "3B":
@@ -106,7 +112,7 @@ class TransBlock(nn.Module):
         self.n_head = n_head
         self.d_hidden = self.embed_dim // self.n_head
         self.r_ff = r_ff
-
+        
         # Layers
         self.layer_norm1 = nn.LayerNorm(self.embed_dim)
         self.layer_norm2 = nn.LayerNorm(self.embed_dim)
@@ -118,11 +124,11 @@ class TransBlock(nn.Module):
         )
         self.feedforward = FeedForwardLayer(self.embed_dim, self.r_ff, p_drop=p_drop)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         # Self-attention block with residual connection
         residual = x
         x_norm = self.layer_norm1(x)
-        attn_output = self.attention(x_norm, x_norm, x_norm)
+        attn_output = self.attention(x_norm, x_norm, x_norm, y)
         x = residual + self.dropout1(attn_output)
 
         # Feed-forward block with residual connection

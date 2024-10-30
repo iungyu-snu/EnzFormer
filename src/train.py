@@ -7,19 +7,15 @@ from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
 import os
 from model import ECT
-from af2.prep import prep_pdb
-from af2.model import model
-import extract_dm
-import get_chainid
 import numpy as np
 import logging
 
 # Set up logging configuration
-logging.basicConfig(
-    filename='model_outputs.log',  # Log file name
-    level=logging.INFO,            # Set the logging level
-    format='%(asctime)s - %(levelname)s - %(message)s'  # Log format
-)
+#logging.basicConfig(
+#    filename='model_outputs.log',  # Log file name
+#    level=logging.INFO,            # Set the logging level
+#    format='%(asctime)s - %(levelname)s - %(message)s'  # Log format
+#)
 
 def train(model, dataloader, criterion, optimizer, device):
     model.train()
@@ -27,15 +23,15 @@ def train(model, dataloader, criterion, optimizer, device):
 
     for batch_idx, batch in enumerate(dataloader):
         if batch is None:
-            continue  # Skip empty batches
+            continue 
 
-        fasta_embeds, annotations = batch  # Data first, labels second
+        fasta_embeds, annotations, dm_embeds = batch  # Data first, labels second
 
         fasta_embeds = fasta_embeds.to(device)
         annotations = annotations.to(device)
-
-        outputs = model(fasta_embeds)
-        logging.info(f'Outputs at train batch {batch_idx}: {outputs}')
+        dm_embeds = dm_embeds.to(device)
+        outputs = model(fasta_embeds, dm_embeds)
+#        logging.info(f'Outputs at train batch {batch_idx}: {outputs}')
         loss = criterion(outputs, annotations)
         loss.backward()
         optimizer.step()
@@ -51,15 +47,16 @@ def validate(model, dataloader, criterion, device):
     with torch.no_grad():
         for batch_idx, batch in enumerate(dataloader):
             if batch is None:
-                continue  # Skip empty batches
+                continue  
 
-            fasta_embeds, annotations = batch  # Data first, labels second
+            fasta_embeds, annotations, dm_embeds = batch  # Data first, labels second
 
             fasta_embeds = fasta_embeds.to(device)
             annotations = annotations.to(device)
+            dm_embeds = dm_embeds.to(device)
 
-            outputs = model(fasta_embeds)
-            logging.info(f'Outputs at validation batch {batch_idx}: {outputs}')
+            outputs = model(fasta_embeds, dm_embeds)
+#            logging.info(f'Outputs at validation batch {batch_idx}: {outputs}')
 
             # Check for NaNs in model outputs
             if torch.isnan(outputs).any():
@@ -79,87 +76,88 @@ def pad_collate_fn(batch):
     Filters out samples with zero-dimensional data tensors.
     Assumes that each item in the batch is a tuple (data_tensor, label_tensor).
     """
-    # Filter out samples with zero-dimensional data tensors
-    filtered_batch = [(data_tensor, label_tensor) for data_tensor, label_tensor in batch if data_tensor.dim() > 0]
 
-    if len(filtered_batch) == 0:
-        print("Warning: All data tensors in the batch are zero-dimensional.")
-        return None  # Skip this batch
+    data_tensors, label_tensors, dm_tensors = zip(*batch)
 
-    data_tensors, label_tensors = zip(*filtered_batch)
+    # ====
+    # padding for seq tensors
+    max_length = max(tensor.size(0) for tensor in data_tensors + dm_tensors)
 
-    # Find the max size in the first dimension
-    max_length = max(tensor.size(0) for tensor in data_tensors)
-
-    # Pad tensors
+# Padding data_tensors
     padded_data = []
     for tensor in data_tensors:
         padding_length = max_length - tensor.size(0)
         if padding_length > 0:
-            # Pad with zeros on the first dimension
             padding = torch.zeros((padding_length, tensor.size(1)), dtype=torch.float32)
             padded_tensor = torch.cat((tensor, padding), dim=0)
         else:
             padded_tensor = tensor
         padded_data.append(padded_tensor)
 
+    # Padding dm_tensors to the same max_length
+    padded_dm = []
+    for tensor in dm_tensors:
+        current_size = tensor.size(0)
+        if current_size < max_length:
+            padded_matrix = torch.zeros((max_length, max_length), dtype=torch.float32)
+            padded_matrix[:current_size, :current_size] = tensor
+        else:
+            padded_matrix = tensor
+        padded_dm.append(padded_matrix)
 
-    # Stack tensors
+# Stack tensors
     batch_data = torch.stack(padded_data, dim=0)
     batch_labels = torch.stack(label_tensors, dim=0)
-    return batch_data, batch_labels  # Return data first, labels second
-
+    batch_dm = torch.stack(padded_dm, dim=0)
+    return batch_data, batch_labels, batch_dm
 class EmbedDataset(Dataset):
     def __init__(self, data_dir):
-        self.data_dir = data_dir
         self.samples = []
 
-        # List all .npy files in the directory
         for filename in os.listdir(data_dir):
-            if filename.endswith('.npy'):
+            if filename.endswith('.npy') and not filename.endswith('_dm.npy'):
                 base_name = os.path.splitext(filename)[0]
                 npy_path = os.path.join(data_dir, filename)
                 header_path = os.path.join(data_dir, f"{base_name}_header.txt")
-                pdb_path = os.path.join(data_dir, f"{base_name}.pdb")
-                chain_id = get_chainid(pdb_path)
-                if os.path.exists(header_path):
-                    # Load data to check if it's valid
-                    data = np.load(npy_path)
-                    if data.shape == ():
-                        print(f"Skipping {npy_path} due to invalid data shape: {data.shape}")
-                        continue
-                    self.samples.append((npy_path, header_path))
-                else:
+                dm_path = os.path.join(data_dir, f"{base_name}_dm.npy")
+
+                if not os.path.exists(header_path):
                     print(f"Warning: Header file {header_path} not found for {npy_path}")
+                    continue
+
+                if not os.path.exists(dm_path):
+                    print(f"Warning: dm file {dm_path} not found for {npy_path}")
+                    continue
+
+                self.samples.append((npy_path, header_path, dm_path))
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        npy_path, header_path = self.samples[idx]
+        npy_path, header_path, dm_path = self.samples[idx]
 
-        # == Load the numpy array
+        # Load the numpy arrays
         data = np.load(npy_path)
+        dm_data = np.load(dm_path)
 
-        # == Load the annotation
+        # Load the annotation
         try:
             with open(header_path, 'r') as f:
                 annotation = f.read().strip()
             if not annotation:
                 raise ValueError(f"No annotation found in {header_path}")
-                
-                
             label = int(annotation)
-
         except Exception as e:
             print(f"Error processing label for sample {idx}: {e}")
             raise e
 
         # Convert to tensors
-        data_tensor = torch.tensor(data, dtype=torch.float32)
+        data_tensor = torch.from_numpy(data).float()
+        dm_tensor = torch.from_numpy(dm_data).float()
         label_tensor = torch.tensor(label, dtype=torch.long)
-        pdb_tensor = extract_dm(pdb_path, chain_id)
-        return data_tensor, label_tensor , pdb_tensor
+
+        return data_tensor, label_tensor, dm_tensor
 
 def main():
     parser = argparse.ArgumentParser(description="Train your model with specific data")
@@ -174,6 +172,7 @@ def main():
     parser.add_argument("batch_size", type=int, help="Batch size to use")
     parser.add_argument("learning_rate", type=float, help="Learning rate to use")
     parser.add_argument("num_epochs", type=int, help="Number of epochs")
+    parser.add_argument("n_head", type=int, help="head_num for attention")
     parser.add_argument(
         "--dropout_rate", type=float, default=0.1, help="Dropout rate to use"
     )
@@ -186,15 +185,15 @@ def main():
 
     # Print arguments for verification
     print(f"Model name: {args.model_name}")
-    print(f"Save directory: {args.save_dir}")
+#    print(f"Save directory: {args.save_dir}")
     print(f"Output dimension: {args.output_dim}")
     print(f"Number of blocks: {args.num_blocks}")
     print(f"Batch size: {args.batch_size}")
     print(f"Learning rate: {args.learning_rate}")
     print(f"Number of epochs: {args.num_epochs}")
-    print(f"Use GPU: {not args.nogpu}")
     print(f"Dropout_rate: {args.dropout_rate}")
     print(f"Weight Decay: {args.weight_decay}")
+    print(f"Head num for Attention: {args.n_head}")
     print("OPTIMIZER: ADAM")
 
     ########## Training Parameters #################
@@ -207,6 +206,7 @@ def main():
     weight_decay = args.weight_decay
     save_dir = args.save_dir
     model_name = args.model_name
+    n_head = args.n_head
     data_dir = f'/nashome/uglee/EnzFormer/embed_data/{model_name}'
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.nogpu else "cpu"
@@ -214,7 +214,7 @@ def main():
     k_folds = 5
     
     # Datat processing =====
-    print(f"Data processing of {data_dir}")
+    print(f"Building Dataset from {data_dir}........................")
     dataset = EmbedDataset(data_dir)
     ################ 5-Cross Validation #############
 
@@ -256,6 +256,7 @@ def main():
             model_name=model_name,
             output_dim=output_dim,
             num_blocks=num_blocks,
+            n_head=n_head,
             dropout_rate=dropout_rate
         ).to(device)
 

@@ -1,7 +1,0 @@
-README.md
-setup.py
-src/ECMM.egg-info/PKG-INFO
-src/ECMM.egg-info/SOURCES.txt
-src/ECMM.egg-info/dependency_links.txt
-src/ECMM.egg-info/entry_points.txt
-src/ECMM.egg-info/top_level.txt
