@@ -9,6 +9,7 @@ import os
 from model import ECT
 import numpy as np
 import logging
+from sklearn.metrics import precision_score, recall_score, f1_score
 
 # Set up logging configuration
 #logging.basicConfig(
@@ -40,10 +41,44 @@ def train(model, dataloader, criterion, optimizer, device):
 
     return total_loss / len(dataloader)
 
+#def validate(model, dataloader, criterion, device):
+#    model.eval()
+#    total_loss = 0
+
+#    with torch.no_grad():
+#        for batch_idx, batch in enumerate(dataloader):
+#            if batch is None:
+#                continue  
+
+#            fasta_embeds, annotations, dm_embeds = batch  # Data first, labels second
+
+#            fasta_embeds = fasta_embeds.to(device)
+#            annotations = annotations.to(device)
+#            dm_embeds = dm_embeds.to(device)
+
+#            outputs = model(fasta_embeds, dm_embeds)
+#            logging.info(f'Outputs at validation batch {batch_idx}: {outputs}')
+
+            # Check for NaNs in model outputs
+#            if torch.isnan(outputs).any():
+#                print(f"NaNs found in model outputs at batch {batch_idx}")
+#                continue
+
+            # Compute the loss
+#            loss = criterion(outputs, annotations)
+#            total_loss += loss.item()
+
+#    average_loss = total_loss / len(dataloader)
+#    return average_loss
+
+
 def validate(model, dataloader, criterion, device):
     model.eval()
     total_loss = 0
-
+    all_preds = []
+    all_labels = []
+    correct_predictions = 0
+    total_samples = 0
     with torch.no_grad():
         for batch_idx, batch in enumerate(dataloader):
             if batch is None:
@@ -56,9 +91,7 @@ def validate(model, dataloader, criterion, device):
             dm_embeds = dm_embeds.to(device)
 
             outputs = model(fasta_embeds, dm_embeds)
-#            logging.info(f'Outputs at validation batch {batch_idx}: {outputs}')
 
-            # Check for NaNs in model outputs
             if torch.isnan(outputs).any():
                 print(f"NaNs found in model outputs at batch {batch_idx}")
                 continue
@@ -67,8 +100,19 @@ def validate(model, dataloader, criterion, device):
             loss = criterion(outputs, annotations)
             total_loss += loss.item()
 
+            _, preds = torch.max(outputs, 1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(annotations.cpu().numpy())
+            correct_predictions += (preds == annotations).sum().item()
+            total_samples += annotations.size(0)
+    precision = precision_score(all_labels, all_preds, average='macro',zero_division=0)
+    recall = recall_score(all_labels, all_preds, average='macro')
+    f1 = f1_score(all_labels, all_preds, average='macro')
+    accuracy = correct_predictions / total_samples
     average_loss = total_loss / len(dataloader)
-    return average_loss
+
+    return average_loss, accuracy, precision, recall, f1
+
 
 def pad_collate_fn(batch):
     """
@@ -83,7 +127,7 @@ def pad_collate_fn(batch):
     # padding for seq tensors
     max_length = max(tensor.size(0) for tensor in data_tensors + dm_tensors)
 
-# Padding data_tensors
+    # Padding data_tensors
     padded_data = []
     for tensor in data_tensors:
         padding_length = max_length - tensor.size(0)
@@ -95,11 +139,12 @@ def pad_collate_fn(batch):
         padded_data.append(padded_tensor)
 
     # Padding dm_tensors to the same max_length
+    PADDING_VALUE = -1e9
     padded_dm = []
     for tensor in dm_tensors:
         current_size = tensor.size(0)
         if current_size < max_length:
-            padded_matrix = torch.zeros((max_length, max_length), dtype=torch.float32)
+            padded_matrix = torch.full((max_length, max_length), PADDING_VALUE, dtype=torch.float32)
             padded_matrix[:current_size, :current_size] = tensor
         else:
             padded_matrix = tensor
@@ -271,18 +316,19 @@ def main():
         optimizer = optim.Adam(
             model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )
-
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
         fold_train_losses = []
         fold_val_losses = []
         print("Training epoch starts")
         for epoch in range(num_epochs):
             avg_loss = train(model, train_dataloader, criterion, optimizer, device)
             fold_train_losses.append(avg_loss)
-            val_loss = validate(model, val_dataloader, criterion, device)
-            fold_val_losses.append(val_loss)
+#            val_loss = validate(model, val_dataloader, criterion, device)
+            val_loss, accuracy, precision, recall, f1 = validate(model, val_dataloader, criterion, device)
 
+            fold_val_losses.append(val_loss)
             print(
-                f"Epoch [{epoch+1}/{num_epochs}], Training Loss: {avg_loss:.4f}, Validation Loss: {val_loss:.4f}"
+                f"Epoch [{epoch+1}/{num_epochs}], Training Loss: {avg_loss:.4f},Validation Loss: {val_loss:.4f}, Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}"
             )
 
             if val_loss < min_val_loss:
@@ -297,7 +343,9 @@ def main():
                 if patience_counter >= early_stopping_patience:
                     print("Early stopping triggered due to lack of improvement.")
                     break
-
+            scheduler.step()
+            
+            current_lr = scheduler.get_last_lr()[0]
         if "best_model_state" in locals():
             model_save_path = os.path.join(
                 save_dir, f"{model_name}_{num_blocks}_{learning_rate}_{dropout_rate}_{weight_decay}_earlystopped.pth"

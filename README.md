@@ -2,6 +2,8 @@
 1. The model uses META's ESM as the embedding model and transformer architecture as the enzyme classifier 
 2. The purpose of the model is to look at the FASTA file and classify the enzymes 
 3. We have prepared the code to train it, so let's train it!
+
+![Screenshot](images/screenshot.png)
 ## How to use
 
 ### Create a virtual environment
