@@ -11,12 +11,7 @@ import numpy as np
 import logging
 from sklearn.metrics import precision_score, recall_score, f1_score
 
-# Set up logging configuration
-#logging.basicConfig(
-#    filename='model_outputs.log',  # Log file name
-#    level=logging.INFO,            # Set the logging level
-#    format='%(asctime)s - %(levelname)s - %(message)s'  # Log format
-#)
+
 
 def train(model, dataloader, criterion, optimizer, device):
     model.train()
@@ -31,8 +26,8 @@ def train(model, dataloader, criterion, optimizer, device):
         fasta_embeds = fasta_embeds.to(device)
         annotations = annotations.to(device)
         dm_embeds = dm_embeds.to(device)
+        optimizer.zero_grad()
         outputs = model(fasta_embeds, dm_embeds)
-#        logging.info(f'Outputs at train batch {batch_idx}: {outputs}')
         loss = criterion(outputs, annotations)
         loss.backward()
         optimizer.step()
@@ -41,38 +36,14 @@ def train(model, dataloader, criterion, optimizer, device):
 
     return total_loss / len(dataloader)
 
-#def validate(model, dataloader, criterion, device):
-#    model.eval()
-#    total_loss = 0
-
-#    with torch.no_grad():
-#        for batch_idx, batch in enumerate(dataloader):
-#            if batch is None:
-#                continue  
-
-#            fasta_embeds, annotations, dm_embeds = batch  # Data first, labels second
-
-#            fasta_embeds = fasta_embeds.to(device)
-#            annotations = annotations.to(device)
-#            dm_embeds = dm_embeds.to(device)
-
-#            outputs = model(fasta_embeds, dm_embeds)
-#            logging.info(f'Outputs at validation batch {batch_idx}: {outputs}')
-
-            # Check for NaNs in model outputs
-#            if torch.isnan(outputs).any():
-#                print(f"NaNs found in model outputs at batch {batch_idx}")
-#                continue
-
-            # Compute the loss
-#            loss = criterion(outputs, annotations)
-#            total_loss += loss.item()
-
-#    average_loss = total_loss / len(dataloader)
-#    return average_loss
 
 
-def validate(model, dataloader, criterion, device):
+
+
+
+
+
+def validate(model, dataloader, criterion, device, threshold):
     model.eval()
     total_loss = 0
     all_preds = []
@@ -84,7 +55,7 @@ def validate(model, dataloader, criterion, device):
             if batch is None:
                 continue  
 
-            fasta_embeds, annotations, dm_embeds = batch  # Data first, labels second
+            fasta_embeds, annotations, dm_embeds = batch
 
             fasta_embeds = fasta_embeds.to(device)
             annotations = annotations.to(device)
@@ -96,22 +67,56 @@ def validate(model, dataloader, criterion, device):
                 print(f"NaNs found in model outputs at batch {batch_idx}")
                 continue
 
-            # Compute the loss
+
             loss = criterion(outputs, annotations)
             total_loss += loss.item()
 
-            _, preds = torch.max(outputs, 1)
-            all_preds.extend(preds.cpu().numpy())
+            probabilities = torch.softmax(outputs, dim=1)
+            max_probs, preds = torch.max(probabilities, dim=1)
+
+            # Apply threshold
+            preds_thresholded = preds.clone()
+            preds_thresholded[max_probs < threshold] = -1  # Assign -1 to predictions below threshold
+
+            all_preds.extend(preds_thresholded.cpu().numpy())
             all_labels.extend(annotations.cpu().numpy())
-            correct_predictions += (preds == annotations).sum().item()
             total_samples += annotations.size(0)
-    precision = precision_score(all_labels, all_preds, average='macro',zero_division=0)
-    recall = recall_score(all_labels, all_preds, average='macro')
-    f1 = f1_score(all_labels, all_preds, average='macro')
+
+            # For computing accuracy
+            correct_predictions += (preds_thresholded == annotations).sum().item()
+
+    all_preds_array = np.array(all_preds)
+    all_labels_array = np.array(all_labels)
+
+    # valid_indicies => boolean for valid data
+#    valid_indices = all_preds_array != -1
+#    valid_preds = all_preds_array[valid_indices]
+#    valid_labels = all_labels_array[valid_indices]
+
+    if len(all_preds_array) > 0:
+        precision = precision_score(all_labels_array, all_preds_array, labels=np.unique(all_preds_array), average='macro', zero_division=0)
+        recall = recall_score(all_labels_array, all_preds_array, labels=np.unique(all_preds_array), average='macro', zero_division=0)
+        f1 = f1_score(all_labels_array, all_preds_array, labels=np.unique(all_preds_array), average='macro', zero_division=0) 
+    else:
+        precision = recall = f1 = 0.0
+
+
     accuracy = correct_predictions / total_samples
     average_loss = total_loss / len(dataloader)
 
     return average_loss, accuracy, precision, recall, f1
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def pad_collate_fn(batch):
@@ -155,6 +160,18 @@ def pad_collate_fn(batch):
     batch_labels = torch.stack(label_tensors, dim=0)
     batch_dm = torch.stack(padded_dm, dim=0)
     return batch_data, batch_labels, batch_dm
+
+
+
+
+
+
+
+
+
+
+
+
 class EmbedDataset(Dataset):
     def __init__(self, data_dir):
         self.samples = []
@@ -204,6 +221,16 @@ class EmbedDataset(Dataset):
 
         return data_tensor, label_tensor, dm_tensor
 
+
+
+
+
+
+
+
+
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train your model with specific data")
     parser.add_argument(
@@ -218,6 +245,10 @@ def main():
     parser.add_argument("learning_rate", type=float, help="Learning rate to use")
     parser.add_argument("num_epochs", type=int, help="Number of epochs")
     parser.add_argument("n_head", type=int, help="head_num for attention")
+    parser.add_argument("threshold", type=float, help="threshold ofor precision,recall,F1")
+    parser.add_argument(
+        "optimizer", type=str, choices=["Adam", "AdamW"], help="Choose 'Adam' or 'AdamW' as the optimizer"
+    )
     parser.add_argument(
         "--dropout_rate", type=float, default=0.1, help="Dropout rate to use"
     )
@@ -239,7 +270,8 @@ def main():
     print(f"Dropout_rate: {args.dropout_rate}")
     print(f"Weight Decay: {args.weight_decay}")
     print(f"Head num for Attention: {args.n_head}")
-    print("OPTIMIZER: ADAM")
+    print(f"Threshold of metircs: {args.threshold}")
+    print(f"OPTIMIZER: {args.optimizer}")
 
     ########## Training Parameters #################
     output_dim = args.output_dim
@@ -252,6 +284,7 @@ def main():
     save_dir = args.save_dir
     model_name = args.model_name
     n_head = args.n_head
+    threshold = args.threshold
     data_dir = f'/nashome/uglee/EnzFormer/embed_data/{model_name}'
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.nogpu else "cpu"
@@ -313,20 +346,35 @@ def main():
             raise ValueError(
                 "Invalid output_dim. It should be 2 for binary classification or greater than 2 for multi-class classification."
             )
-        optimizer = optim.Adam(
+
+        if args.optimizer == 'Adam':
+            optimizer = optim.Adam(
             model.parameters(), lr=learning_rate, weight_decay=weight_decay
-        )
+            )
+        elif args.optimizer == 'AdamW':
+            optimizer = optim.AdamW(
+            model.parameters(), lr=learning_rate, weight_decay=weight_decay
+            )
+        else:
+            raise ValueError(f"Unknown optimizer: {args['optimizer']}")
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
         fold_train_losses = []
         fold_val_losses = []
-        print("Training epoch starts")
+
+
+
+
         for epoch in range(num_epochs):
             avg_loss = train(model, train_dataloader, criterion, optimizer, device)
             fold_train_losses.append(avg_loss)
-#            val_loss = validate(model, val_dataloader, criterion, device)
-            val_loss, accuracy, precision, recall, f1 = validate(model, val_dataloader, criterion, device)
+            val_loss, accuracy, precision, recall, f1 = validate(model, val_dataloader, criterion, device, threshold)
 
             fold_val_losses.append(val_loss)
+
+
+
+
+
             print(
                 f"Epoch [{epoch+1}/{num_epochs}], Training Loss: {avg_loss:.4f},Validation Loss: {val_loss:.4f}, Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}"
             )
@@ -359,6 +407,18 @@ def main():
 
         train_losses.append(fold_train_losses)
         val_losses.append(fold_val_losses)
+
+
+
+
+
+
+
+
+
+
+        ## Plot
+
 
         print(
             f"Cross-validation complete for fold {fold+1}. Validation Loss = {val_loss:.4f}"

@@ -15,18 +15,20 @@ MODEL_NAME="8M"
 SAVE_DIR="/nashome/uglee/EnzFormer/results"
 OUTPUT_DIM=7
 NUM_BLOCKS=4
-BATCH_SIZE=64
-LEARNING_RATE=0.0001
+BATCH_SIZE=32
+LEARNING_RATE=0.00034
 NUM_EPOCHS=50
-DROPOUT_RATE=0.2    # Dropout rate to use (default is 0.1)
-WEIGHT_DECAY=0.001       # Weight decay value for optimizer (default is 0.00001)
-N_HEAD=8
+DROPOUT_RATE=0.45    # Dropout rate to use (default is 0.1)
+WEIGHT_DECAY=0.002     # Weight decay value for optimizer (default is 0.00001)
+N_HEAD=4
+THRESHOLD=0.8
+OPTIMIZER=Adam
 USE_GPU=true           # Set to false to use CPU instead of GPU
 
 # -------------------- End of User Configuration --------------------
 
 # Construct the command to run the training script
-CMD="python train.py \"$MODEL_NAME\" \"$SAVE_DIR\" $OUTPUT_DIM $NUM_BLOCKS $BATCH_SIZE $LEARNING_RATE $NUM_EPOCHS $N_HEAD"
+CMD="python train.py \"$MODEL_NAME\" \"$SAVE_DIR\" $OUTPUT_DIM $NUM_BLOCKS $BATCH_SIZE $LEARNING_RATE $NUM_EPOCHS $N_HEAD $THRESHOLD $OPTIMIZER"
 
 # Add optional arguments if they are set
 if [ ! -z "$DROPOUT_RATE" ]; then
