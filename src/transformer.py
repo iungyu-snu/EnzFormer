@@ -78,8 +78,8 @@ class Attention(nn.Module):
 
         # =====
         # Adding pair bias to attention scores
-        dm_embeds = dm_embeds.unsqueeze(1).repeat(1, self.h, 1, 1)
-        attn_scores = attn_scores + dm_embeds
+#        dm_embeds = dm_embeds.unsqueeze(1).repeat(1, self.h, 1, 1)
+#        attn_scores = attn_scores + dm_embeds
 
         attn_weights = F.softmax(attn_scores, dim=-1)
         attn_weights = self.attn_dropout(attn_weights)  
