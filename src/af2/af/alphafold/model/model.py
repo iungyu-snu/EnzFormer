@@ -27,104 +27,107 @@ import numpy as np
 import tensorflow.compat.v1 as tf
 import tree
 
+
 class RunModel:
-  """Container for JAX model."""
+    """Container for JAX model."""
 
-  def __init__(self,
-               config: ml_collections.ConfigDict,
-               params: Optional[Mapping[str, Mapping[str, np.ndarray]]] = None,
-               return_representations=True,
-               recycle_mode=None,
-               use_multimer=False):
+    def __init__(
+        self,
+        config: ml_collections.ConfigDict,
+        params: Optional[Mapping[str, Mapping[str, np.ndarray]]] = None,
+        return_representations=True,
+        recycle_mode=None,
+        use_multimer=False,
+    ):
 
-    self.config = config
-    self.params = params
-    self.use_multimer = use_multimer
-    
-    self.mode = recycle_mode
-    if self.mode is None: self.mode = []
+        self.config = config
+        self.params = params
+        self.use_multimer = use_multimer
 
-    def _forward_fn(batch):
-      if use_multimer:
-        model = modules_multimer.AlphaFold(self.config.model)
-      else:
-        model = modules.AlphaFold(self.config.model)
-      return model(
-          batch,
-          return_representations=return_representations)
-    
-    self.init = jax.jit(hk.transform(_forward_fn).init)
-    self.apply_fn = jax.jit(hk.transform(_forward_fn).apply)
-    
-    def apply(params, key, feat):
-      
-      if "prev" in feat:
-        prev = feat["prev"]      
-      else:
-        L = feat['aatype'].shape[0]
-        prev = {'prev_msa_first_row': np.zeros([L,256]),
-                'prev_pair': np.zeros([L,L,128]),
-                'prev_pos': np.zeros([L,37,3])}
-        if self.config.global_config.use_dgram:
-          prev['prev_dgram'] = np.zeros([L,L,64])
-        feat["prev"] = prev
+        self.mode = recycle_mode
+        if self.mode is None:
+            self.mode = []
 
-      ################################
-      # decide how to run recycles
-      ################################
-      if self.config.model.num_recycle:
-        # use scan()
-        def loop(prev, sub_key):
-          feat["prev"] = prev
-          results = self.apply_fn(params, sub_key, feat)
-          prev = results["prev"]
-          if "backprop" not in self.mode:
-              prev = jax.lax.stop_gradient(prev)
-          return prev, results
+        def _forward_fn(batch):
+            if use_multimer:
+                model = modules_multimer.AlphaFold(self.config.model)
+            else:
+                model = modules.AlphaFold(self.config.model)
+            return model(batch, return_representations=return_representations)
 
-        keys = jax.random.split(key, self.config.model.num_recycle + 1)
-        _, o = jax.lax.scan(loop, prev, keys)
-        results = jax.tree_map(lambda x:x[-1], o)
+        self.init = jax.jit(hk.transform(_forward_fn).init)
+        self.apply_fn = jax.jit(hk.transform(_forward_fn).apply)
 
-        if "add_prev" in self.mode:
-          for k in ["distogram","predicted_lddt","predicted_aligned_error"]:
-            if k in results:
-              results[k]["logits"] = o[k]["logits"].mean(0)
-      
-      else:
-        # single pass
-        results = self.apply_fn(params, key, feat)
-      
-      return results
-    
-    self.apply = jax.jit(apply)
+        def apply(params, key, feat):
 
-  def process_features(
-      self,
-      raw_features: Union[tf.train.Example, features.FeatureDict],
-      random_seed: int) -> features.FeatureDict:
-    """Processes features to prepare for feeding them into the model.
+            if "prev" in feat:
+                prev = feat["prev"]
+            else:
+                L = feat["aatype"].shape[0]
+                prev = {
+                    "prev_msa_first_row": np.zeros([L, 256]),
+                    "prev_pair": np.zeros([L, L, 128]),
+                    "prev_pos": np.zeros([L, 37, 3]),
+                }
+                if self.config.global_config.use_dgram:
+                    prev["prev_dgram"] = np.zeros([L, L, 64])
+                feat["prev"] = prev
 
-    Args:
-      raw_features: The output of the data pipeline either as a dict of NumPy
-        arrays or as a tf.train.Example.
-      random_seed: The random seed to use when processing the features.
+            ################################
+            # decide how to run recycles
+            ################################
+            if self.config.model.num_recycle:
+                # use scan()
+                def loop(prev, sub_key):
+                    feat["prev"] = prev
+                    results = self.apply_fn(params, sub_key, feat)
+                    prev = results["prev"]
+                    if "backprop" not in self.mode:
+                        prev = jax.lax.stop_gradient(prev)
+                    return prev, results
 
-    Returns:
-      A dict of NumPy feature arrays suitable for feeding into the model.
-    """
+                keys = jax.random.split(key, self.config.model.num_recycle + 1)
+                _, o = jax.lax.scan(loop, prev, keys)
+                results = jax.tree_map(lambda x: x[-1], o)
 
-    if self.use_multimer:
-      return raw_features
+                if "add_prev" in self.mode:
+                    for k in ["distogram", "predicted_lddt", "predicted_aligned_error"]:
+                        if k in results:
+                            results[k]["logits"] = o[k]["logits"].mean(0)
 
-    # Single-chain mode.
-    if isinstance(raw_features, dict):
-      return features.np_example_to_features(
-          np_example=raw_features,
-          config=self.config,
-          random_seed=random_seed)
-    else:
-      return features.tf_example_to_features(
-          tf_example=raw_features,
-          config=self.config,
-          random_seed=random_seed)
+            else:
+                # single pass
+                results = self.apply_fn(params, key, feat)
+
+            return results
+
+        self.apply = jax.jit(apply)
+
+    def process_features(
+        self,
+        raw_features: Union[tf.train.Example, features.FeatureDict],
+        random_seed: int,
+    ) -> features.FeatureDict:
+        """Processes features to prepare for feeding them into the model.
+
+        Args:
+          raw_features: The output of the data pipeline either as a dict of NumPy
+            arrays or as a tf.train.Example.
+          random_seed: The random seed to use when processing the features.
+
+        Returns:
+          A dict of NumPy feature arrays suitable for feeding into the model.
+        """
+
+        if self.use_multimer:
+            return raw_features
+
+        # Single-chain mode.
+        if isinstance(raw_features, dict):
+            return features.np_example_to_features(
+                np_example=raw_features, config=self.config, random_seed=random_seed
+            )
+        else:
+            return features.tf_example_to_features(
+                tf_example=raw_features, config=self.config, random_seed=random_seed
+            )

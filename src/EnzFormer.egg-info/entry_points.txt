@@ -1,0 +1,5 @@
+[console_scripts]
+embedding = embedding:main
+evaluate = evaluate:main
+extract_dm = extract_dm:main
+train = train:main

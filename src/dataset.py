@@ -6,6 +6,7 @@ class FastaDataset(Dataset):
     """
     Fasta Files is a list that contains the file paths to the Fata files.
     """
+
     def __init__(self, fasta_files):
         self.original_fasta_files = fasta_files
         self.annotations = []

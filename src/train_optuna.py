@@ -9,13 +9,14 @@ import optuna
 from optuna.trial import TrialState
 from model import ECT
 
+
 def train(model, dataloader, criterion, optimizer, device):
     model.train()
     total_loss = 0
 
     for batch_idx, batch in enumerate(dataloader):
         if batch is None:
-            continue 
+            continue
 
         fasta_embeds, annotations, dm_embeds = batch
 
@@ -28,12 +29,13 @@ def train(model, dataloader, criterion, optimizer, device):
         loss = criterion(outputs, annotations)
         loss.backward()
         # Gradient clipping
-        #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         total_loss += loss.item()
 
     return total_loss / len(dataloader)
+
 
 def validate(model, dataloader, criterion, device):
     model.eval()
@@ -42,7 +44,7 @@ def validate(model, dataloader, criterion, device):
     with torch.no_grad():
         for batch_idx, batch in enumerate(dataloader):
             if batch is None:
-                continue  
+                continue
 
             fasta_embeds, annotations, dm_embeds = batch
 
@@ -63,6 +65,7 @@ def validate(model, dataloader, criterion, device):
 
     average_loss = total_loss / len(dataloader)
     return average_loss
+
 
 def pad_collate_fn(batch):
     data_tensors, label_tensors, dm_tensors = zip(*batch)
@@ -87,7 +90,9 @@ def pad_collate_fn(batch):
     for tensor in dm_tensors:
         current_size = tensor.size(0)
         if current_size < max_length:
-            padded_matrix = torch.full((max_length, max_length), PADDING_VALUE, dtype=torch.float32)
+            padded_matrix = torch.full(
+                (max_length, max_length), PADDING_VALUE, dtype=torch.float32
+            )
             padded_matrix[:current_size, :current_size] = tensor
         else:
             padded_matrix = tensor
@@ -99,19 +104,22 @@ def pad_collate_fn(batch):
     batch_dm = torch.stack(padded_dm, dim=0)
     return batch_data, batch_labels, batch_dm
 
+
 class EmbedDataset(Dataset):
     def __init__(self, data_dir):
         self.samples = []
 
         for filename in os.listdir(data_dir):
-            if filename.endswith('.npy') and not filename.endswith('_dm.npy'):
+            if filename.endswith(".npy") and not filename.endswith("_dm.npy"):
                 base_name = os.path.splitext(filename)[0]
                 npy_path = os.path.join(data_dir, filename)
                 header_path = os.path.join(data_dir, f"{base_name}_header.txt")
                 dm_path = os.path.join(data_dir, f"{base_name}_dm.npy")
 
                 if not os.path.exists(header_path):
-                    print(f"Warning: Header file {header_path} not found for {npy_path}")
+                    print(
+                        f"Warning: Header file {header_path} not found for {npy_path}"
+                    )
                     continue
 
                 if not os.path.exists(dm_path):
@@ -132,7 +140,7 @@ class EmbedDataset(Dataset):
 
         # Load the annotation
         try:
-            with open(header_path, 'r') as f:
+            with open(header_path, "r") as f:
                 annotation = f.read().strip()
             if not annotation:
                 raise ValueError(f"No annotation found in {header_path}")
@@ -148,10 +156,13 @@ class EmbedDataset(Dataset):
 
         return data_tensor, label_tensor, dm_tensor
 
+
 def main():
     parser = argparse.ArgumentParser(description="Train your model with specific data")
     parser.add_argument(
-        "model_name", type=str, help="The name of the ESM BERT model: [8M,35M,150M,650M,3B,15B]"
+        "model_name",
+        type=str,
+        help="The name of the ESM BERT model: [8M,35M,150M,650M,3B,15B]",
     )
     parser.add_argument(
         "save_dir", type=str, help="Directory for saving model checkpoints"
@@ -160,11 +171,13 @@ def main():
     args = parser.parse_args()
 
     # Device
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.nogpu else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.nogpu else "cpu"
+    )
 
     # Create the study
     study = optuna.create_study(direction="minimize")
-    
+
     # Optimize
     study.optimize(lambda trial: objective(trial, args, device), n_trials=50)
 
@@ -177,6 +190,7 @@ def main():
     print("  Params: ")
     for key, value in trial.params.items():
         print("    {}: {}".format(key, value))
+
 
 def objective(trial, args, device):
     # Suggest hyperparameters
@@ -192,27 +206,23 @@ def objective(trial, args, device):
     early_stopping_patience = 5
 
     # Prepare Dataset and DataLoader
-    data_dir = f'/nashome/uglee/EnzFormer/embed_data/{args.model_name}'
+    data_dir = f"/nashome/uglee/EnzFormer/embed_data/{args.model_name}"
     print(f"Building Dataset from {data_dir}........................")
     dataset = EmbedDataset(data_dir)
 
     # For simplicity, use a single train-validation split
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
-    train_subset, val_subset = torch.utils.data.random_split(dataset, [train_size, val_size])
+    train_subset, val_subset = torch.utils.data.random_split(
+        dataset, [train_size, val_size]
+    )
 
     train_dataloader = DataLoader(
-        train_subset,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=pad_collate_fn
+        train_subset, batch_size=batch_size, shuffle=True, collate_fn=pad_collate_fn
     )
 
     val_dataloader = DataLoader(
-        val_subset,
-        batch_size=batch_size,
-        shuffle=False,
-        collate_fn=pad_collate_fn
+        val_subset, batch_size=batch_size, shuffle=False, collate_fn=pad_collate_fn
     )
 
     # Initialize the model
@@ -221,7 +231,7 @@ def objective(trial, args, device):
         output_dim=output_dim,
         num_blocks=num_blocks,
         n_head=n_head,
-        dropout_rate=dropout_rate
+        dropout_rate=dropout_rate,
     ).to(device)
 
     # Criterion
@@ -236,9 +246,13 @@ def objective(trial, args, device):
 
     # Optimizer
     if optimizer_name == "Adam":
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        optimizer = optim.Adam(
+            model.parameters(), lr=learning_rate, weight_decay=weight_decay
+        )
     elif optimizer_name == "AdamW":
-        optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        optimizer = optim.AdamW(
+            model.parameters(), lr=learning_rate, weight_decay=weight_decay
+        )
 
     # Scheduler: Fixed 5% decay at each epoch
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
@@ -284,6 +298,6 @@ def objective(trial, args, device):
 
     return min_val_loss
 
+
 if __name__ == "__main__":
     main()
-

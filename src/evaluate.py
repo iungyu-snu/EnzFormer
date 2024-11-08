@@ -1,108 +1,103 @@
 import argparse
 import torch
-import torch.nn as nn
 import glob
-from protein_embedding import ProteinEmbedding
-from model import Linear_esm
+from colorama import Fore, Style, init
+init(autoreset=True)
+from model import ECT
 import os
 import sys
+import subprocess
+import numpy as np
+import torch.nn.functional as F
+
+enzyme_dict = {
+    0: "Cystathionine beta-lyase",
+    1: "Cystathionine gamma-lyase",
+    2: "Methionine gamma-lyase",
+    3: "Cysteine desulfhydrase",
+    4: "Selenocysteine lyase",
+    5: "Tryptophanase",
+    6: "Serine dehydratase"
+}
+
+RED = "\033[91m"
+GREEN = "\033[92m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate your model with specific data")
-    parser.add_argument("model_location", type=str, help="The name of the ESM BERT model")
-    parser.add_argument("fasta_path", type=str, help="only one fasta file or fasta files directory ")
-    parser.add_argument("model_checkpoint", type=str, help="Path to the trained model checkpoint (.pth file)")
-    parser.add_argument("output_dim", type=int, help="Number of groups to classify")
-    parser.add_argument("num_blocks", type=int, help="Number of linear blocks used in the model")
+    parser = argparse.ArgumentParser(description="Evaluate model with specific data")
+    parser.add_argument("model_name", type=str, help="Name of the ESM BERT model")
+    parser.add_argument("fasta_path", type=str, help="FASTA file or directory")
+    parser.add_argument("model_checkpoint", type=str, help="Path to model checkpoint (.pth file)")
+    parser.add_argument("output_dim", type=int, help="Number of classification groups")
+    parser.add_argument("num_blocks", type=int, help="Number of linear blocks in the model")
     parser.add_argument("--nogpu", action="store_true", help="Use CPU instead of GPU")
 
-    args =parser.parse_args()
-    
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() and not args.nogpu else "cpu"
-    )
-    valid_model_locations = [
-        "esm2_t48_15B_UR50D",
-        "esm2_t36_3B_UR50D",
-        "esm2_t33_650M_UR50D",
-        "esm2_t30_150M_UR50D",
-        "esm2_t12_35M_UR50D",
-        "esm2_t6_8M_UR50D",
-    ]
+    args = parser.parse_args()
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.nogpu else "cpu")
 
-    if args.model_location not in valid_model_locations:
-        print(f"Error: Invalid model_location '{args.model_location}'. Must be one of: {', '.join(valid_model_locations)}")
-        sys.exit(1)
+    model_layers = {
+        "15B": 47,
+        "3B": 35,
+        "650M": 32,
+        "150M": 29,
+        "35M": 11,
+        "8M": 5
+    }
+    num_layers = model_layers.get(args.model_name)
 
-    model_location = args.model_location
-
-    if model_location == "esm2_t48_15B_UR50D":
-        num_layers = 47
-    elif model_location == "esm2_t36_3B_UR50D":
-        num_layers = 35
-    elif model_location == "esm2_t33_650M_UR50D":
-        num_layers = 32
-    elif model_location == "esm2_t30_150M_UR50D":
-        num_layers = 29
-    elif model_location == "esm2_t12_35M_UR50D":
-        num_layers = 11
-    elif model_location == "esm2_t6_8M_UR50D":
-        num_layers = 5
-    else:
-        print(f"Error: Unknown model location '{model_location}'.")
-        sys.exit(1)
-
-    output_dim = args.output_dim
-    num_blocks = args.num_blocks
-
-    try:
-        model = Linear_esm(model_location, output_dim, num_blocks, num_layers).to(device)
-    except Exception as e:
-        print(f"Error: Unable to create Linear_esm model: {e}")
-        sys.exit(1)
-
-    if not os.path.exists(args.model_checkpoint):
-        print(f"Error: Model checkpoint '{args.model_checkpoint}' not found")
-        sys.exit(1)
-    
-    try:
-        model.load_state_dict(torch.load(args.model_checkpoint, map_location=device, weights_only=True))
-    except Exception as e:
-        print(f"Error: Unable to load model checkpoint '{args.model_checkpoint}': {e}")
-        sys.exit(1)
-
+    # Initialize and load model
+    model = ECT(
+        model_name=args.model_name,
+        output_dim=args.output_dim,
+        num_blocks=args.num_blocks,
+        n_head=4,
+        dropout_rate=0.45,
+    ).to(device)
+    model.load_state_dict(torch.load(args.model_checkpoint, map_location=device))
     model.eval()
 
-    fasta_path = args.fasta_path
-
-    if os.path.isdir(fasta_path):
-        fasta_files= [
-            f
-            for f in glob.glob(os.path.join(fasta_path, "*.fasta"))
-            if not f.endswith("_temp.fasta")
-        ]
-    else:
-        if not os.path.isfile(fasta_path):
-            print(f"Error: Fasta File '{fasta_path}' not found")
-            sys.exit(1)
-        fasta_files = [fasta_path]
-
+    # Get FASTA files
+    fasta_files = (
+        glob.glob(os.path.join(args.fasta_path, "*.fasta")) if os.path.isdir(args.fasta_path) else [args.fasta_path]
+    )
     if not fasta_files:
-        print(f"Error: No fasta files found in '{fasta_path}'.")
+        print(f"No FASTA files found in '{args.fasta_path}'.")
         sys.exit(1)
 
-
+    # Evaluate model on each FASTA file
     for fasta_file in fasta_files:
-        try:
-            with torch.no_grad():
-                output = model(fasta_file).to(device)
-                if output is not None:
-                    print(f"Output for {fasta_file}: {output}")
-                else:
-                    print(f"Error: No output is provided from the model '{fasta_file}'")
-                    sys.exit(1)
-        except Exception as e:
-            print(f"Error: No output from the model '{fasta_file}': {e}")
+        npy_file = os.path.join(args.fasta_path, f"{os.path.splitext(os.path.basename(fasta_file))[0]}.npy")
+        dm_npy_file = os.path.join(args.fasta_path, f"{os.path.splitext(os.path.basename(fasta_file))[0]}_dm.npy")
+
+
+        npy_tensor = torch.from_numpy(np.load(npy_file)).float().unsqueeze(0).to(device)
+        dm_npy_tensor = torch.from_numpy(np.load(dm_npy_file)).float().unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            output = model(npy_tensor, dm_npy_tensor).to(device)
+            output = F.softmax(output, dim=1)
+            torch.set_printoptions(sci_mode=False, precision=6)
+            max_values, max_indices = torch.max(output, dim=1)
+    
+            max_index = max_indices.item()
+            max_value = max_values.item()
+            
+
+
+            name=os.path.splitext(os.path.basename(fasta_file))[0]
+
+        if max_value < 0.8:
+            print(f"{Fore.RED}{Style.BRIGHT}*** CAN'T CONFIDENTLY PREDICT ENZYME FUNCTION ***")
+            print(f"{Fore.YELLOW}Predicted enzyme (low confidence) for {name}: {enzyme_dict[max_index]}")
+        else:
+            print(f"{Fore.GREEN}{Style.BRIGHT}=== PREDICTED ENZYME FOR {name}: {enzyme_dict[max_index]} ===")
+    
+        print(f"{Fore.GREEN}{Style.BRIGHT}CONFIDENCE OF AI: {max_value:.6f}")
+
+
 
 
 

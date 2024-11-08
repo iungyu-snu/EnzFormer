@@ -10,15 +10,13 @@ from esm import (
 import torch.nn as nn
 import torch.nn.functional as F
 from transformer import FeedForwardLayer, Attention, TransBlock
-from protein_embedding import ProteinEmbedding
 from torch.nn.utils.rnn import pad_sequence
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 class ECT(nn.Module):
-    def __init__(
-        self, model_name, output_dim, num_blocks, n_head, dropout_rate=0.1
-    ):
+    def __init__(self, model_name, output_dim, num_blocks, n_head, dropout_rate=0.1):
         super().__init__()
         self.model_name = model_name
         if self.model_name == "15B":
@@ -36,8 +34,6 @@ class ECT(nn.Module):
         else:
             raise ValueError("Provide an accurate esm_embedder name")
 
-
-
         # =======
         # parameters
         self.num_blocks = num_blocks
@@ -46,17 +42,15 @@ class ECT(nn.Module):
         self.n_head = n_head
         # ========
         # layers
-        self.layer_norm = nn.LayerNorm(self.embed_dim).to(
-            device
-        )  
-        self.class_fc = nn.Linear(self.embed_dim, self.output_dim).to(
-            device
-        ) 
+        self.layer_norm = nn.LayerNorm(self.embed_dim).to(device)
+        self.class_fc = nn.Linear(self.embed_dim, self.output_dim).to(device)
         # ========
         # blocks
         self.transformer_blocks = nn.ModuleList(
             [
-                TransBlock(self.model_name, self.n_head, r_ff=4, p_drop=dropout_rate).to(device)
+                TransBlock(
+                    self.model_name, self.n_head, r_ff=4, p_drop=dropout_rate
+                ).to(device)
                 for _ in range(self.num_blocks)
             ]
         )
@@ -69,7 +63,7 @@ class ECT(nn.Module):
         for transformer_block in self.transformer_blocks:
             z = transformer_block(x, y)
         if torch.isnan(z).any():
-            print("NaNs detected after transformer")            
+            print("NaNs detected after transformer")
         z = self.layer_norm(z)
         if torch.isnan(x).any():
             print("NaNs detected after layer_norm")
@@ -89,6 +83,5 @@ class ECT(nn.Module):
 #                padding = torch.zeros((pad_length, self.embed_dim)).to(device)
 #                embed = torch.cat((embed, padding), dim=0)
 #            batch_embeds[i] = embed
-        
+
 #        return batch_embeds
-        

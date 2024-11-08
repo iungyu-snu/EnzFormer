@@ -1,0 +1,7 @@
+README.md
+setup.py
+src/EnzFormer.egg-info/PKG-INFO
+src/EnzFormer.egg-info/SOURCES.txt
+src/EnzFormer.egg-info/dependency_links.txt
+src/EnzFormer.egg-info/entry_points.txt
+src/EnzFormer.egg-info/top_level.txt

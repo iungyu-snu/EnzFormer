@@ -13,6 +13,7 @@ import math
 from torch import einsum
 from torch.nn.functional import softmax
 
+
 class FeedForwardLayer(nn.Module):
     def __init__(self, d_model, r_ff, p_drop=0.1):
         super().__init__()
@@ -24,7 +25,7 @@ class FeedForwardLayer(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.kaiming_normal_(self.linear1.weight, nonlinearity='relu')
+        nn.init.kaiming_normal_(self.linear1.weight, nonlinearity="relu")
         nn.init.zeros_(self.linear1.bias)
 
         nn.init.xavier_uniform_(self.linear2.weight)
@@ -35,9 +36,8 @@ class FeedForwardLayer(nn.Module):
         x = F.relu_(x)
         x = self.dropout1(x)
         x = self.linear2(x)
-        x = self.dropout2(x) 
+        x = self.dropout2(x)
         return x
-
 
 
 class Attention(nn.Module):
@@ -49,13 +49,15 @@ class Attention(nn.Module):
         self.to_q = nn.Linear(d_query, n_head * d_hidden, bias=False)
         self.to_k = nn.Linear(d_key, n_head * d_hidden, bias=False)
         self.to_v = nn.Linear(d_key, n_head * d_hidden, bias=False)
-        self.to_out = nn.Linear(n_head * d_hidden, d_query)  # Assuming output dim is same as input dim
+        self.to_out = nn.Linear(
+            n_head * d_hidden, d_query
+        )  # Assuming output dim is same as input dim
 
         self.scaling = 1 / math.sqrt(d_hidden)
-    
+
         self.attn_dropout = nn.Dropout(p_drop)
         self.out_dropout = nn.Dropout(p_drop)
-        
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -74,22 +76,23 @@ class Attention(nn.Module):
         value_proj = self.to_v(value).reshape(B, K, self.h, self.dim)
 
         query_proj = query_proj * self.scaling
-        attn_scores = torch.einsum('bqhd,bkhd->bhqk', query_proj, key_proj)
+        attn_scores = torch.einsum("bqhd,bkhd->bhqk", query_proj, key_proj)
 
         # =====
         # Adding pair bias to attention scores
-#        dm_embeds = dm_embeds.unsqueeze(1).repeat(1, self.h, 1, 1)
-#        attn_scores = attn_scores + dm_embeds
+        #        dm_embeds = dm_embeds.unsqueeze(1).repeat(1, self.h, 1, 1)
+        #        attn_scores = attn_scores + dm_embeds
 
         attn_weights = F.softmax(attn_scores, dim=-1)
-        attn_weights = self.attn_dropout(attn_weights)  
+        attn_weights = self.attn_dropout(attn_weights)
 
-        attn_output = torch.einsum('bhqk,bkhd->bqhd', attn_weights, value_proj)
+        attn_output = torch.einsum("bhqk,bkhd->bqhd", attn_weights, value_proj)
         attn_output = attn_output.reshape(B, Q, self.h * self.dim)
         attn_output = self.to_out(attn_output)
-        attn_output = self.out_dropout(attn_output) 
+        attn_output = self.out_dropout(attn_output)
 
         return attn_output
+
 
 class TransBlock(nn.Module):
     def __init__(self, model_name, n_head, r_ff=4, p_drop=0):
@@ -112,7 +115,7 @@ class TransBlock(nn.Module):
         self.n_head = n_head
         self.d_hidden = self.embed_dim // self.n_head
         self.r_ff = r_ff
-        
+
         # Layers
         self.layer_norm1 = nn.LayerNorm(self.embed_dim)
         self.layer_norm2 = nn.LayerNorm(self.embed_dim)
