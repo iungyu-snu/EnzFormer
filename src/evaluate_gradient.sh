@@ -10,7 +10,7 @@ OUTPUT_DIM=18
 NUM_BLOCKS=5
 USE_GPU=true
 
-CMD="python3 evaluate.py $MODEL_LOCATION $FASTA_DIR $MODEL_CHECKPOINT $OUTPUT_DIM $NUM_BLOCKS"
+CMD="python3 evaluate_gradient.py $MODEL_LOCATION $FASTA_DIR $MODEL_CHECKPOINT $OUTPUT_DIM $NUM_BLOCKS"
 
 if [ "$USE_GPU" = false ]; then
     CMD="$CMD --nogpu"

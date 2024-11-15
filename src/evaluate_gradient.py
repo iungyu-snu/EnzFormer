@@ -83,19 +83,33 @@ def main():
 
 
         npy_tensor = torch.from_numpy(np.load(npy_file)).float().unsqueeze(0).to(device)
-
-        with torch.no_grad():
-            output = model(npy_tensor).to(device)
-            output = F.softmax(output, dim=1)
-            torch.set_printoptions(sci_mode=False, precision=6)
-            max_values, max_indices = torch.max(output, dim=1)
+        npy_tensor.requires_grad = True
+        output = model(npy_tensor).to(device)
+        output = F.softmax(output, dim=1)
+        torch.set_printoptions(sci_mode=False, precision=6)
+        max_values, max_indices = torch.max(output, dim=1)
     
-            max_index = max_indices.item()
-            max_value = max_values.item()
+        max_index = max_indices.item()
+        max_value = max_values.item()
             
 
 
-            name=os.path.splitext(os.path.basename(fasta_file))[0]
+        name=os.path.splitext(os.path.basename(fasta_file))[0]
+        model.zero_grad()
+        # Only choose first batch's max_index 
+        output[0, max_index].backward()
+        
+        gradients = npy_tensor.grad.data.cpu().numpy()[0]  # Remove batch dimension
+
+        # calculate the embedding vectors to one scalar.
+        grad_magnitudes = np.linalg.norm(gradients, axis=1)
+        normalized_grad_magnitudes = grad_magnitudes / np.sum(grad_magnitudes)
+        top_5_indices = np.argsort(normalized_grad_magnitudes)[-5:][::-1] 
+        top_5_probs = normalized_grad_magnitudes[top_5_indices]  
+
+        for i, (index, prob) in enumerate(zip(top_5_indices, top_5_probs), start=1):
+            print(f"Top {i}: Index = {index + 1}, Probability = {prob:.6f}")
+
 
         if max_value < 0.8:
 

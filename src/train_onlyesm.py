@@ -7,11 +7,12 @@ from torch.optim.lr_scheduler import LambdaLR
 from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
 import os
-from model import ECT
+from onlyesm_model import SimpleEsm
 import numpy as np
 import logging
 from sklearn.metrics import precision_score, recall_score, f1_score
-
+from focal_loss import FocalLoss
+import copy
 
 def train(model, dataloader, criterion, optimizer, device):
     model.train()
@@ -20,12 +21,13 @@ def train(model, dataloader, criterion, optimizer, device):
     for batch_idx, batch in enumerate(dataloader):
         if batch is None:
             continue
-        fasta_embeds, annotations, dm_embeds = batch  # Data first, labels second
+
+        fasta_embeds, annotations= batch  # Data first, labels second
 
         fasta_embeds = fasta_embeds.to(device)
         annotations = annotations.to(device)
         optimizer.zero_grad()
-        outputs = model(fasta_embeds, dm_embeds)
+        outputs = model(fasta_embeds)
         loss = criterion(outputs, annotations)
         loss.backward()
         optimizer.step()
@@ -47,13 +49,12 @@ def validate(model, dataloader, criterion, device, threshold):
             if batch is None:
                 continue
 
-            fasta_embeds, annotations, dm_embeds = batch
+            fasta_embeds, annotations = batch
 
             fasta_embeds = fasta_embeds.to(device)
             annotations = annotations.to(device)
-            dm_embeds = dm_embeds.to(device)
 
-            outputs = model(fasta_embeds, dm_embeds)
+            outputs = model(fasta_embeds)
             loss = criterion(outputs, annotations)
             total_loss += loss.item()
 
@@ -113,10 +114,10 @@ def pad_collate_fn(batch):
     Assumes that each item in the batch is a tuple (data_tensor, label_tensor, dm_tensor).
     """
 
-    data_tensors, label_tensors, dm_tensors = zip(*batch)
+    data_tensors, label_tensors = zip(*batch)
 
     # Padding for sequence tensors
-    max_length = max(tensor.size(0) for tensor in data_tensors + dm_tensors)
+    max_length = max(tensor.size(0) for tensor in data_tensors)
 
     # Padding data_tensors
     padded_data = []
@@ -129,25 +130,11 @@ def pad_collate_fn(batch):
             padded_tensor = tensor
         padded_data.append(padded_tensor)
 
-    # Padding dm_tensors to the same max_length
-    PADDING_VALUE = -1e9
-    padded_dm = []
-    for tensor in dm_tensors:
-        current_size = tensor.size(0)
-        if current_size < max_length:
-            padded_matrix = torch.full(
-                (max_length, max_length), PADDING_VALUE, dtype=torch.float32
-            )
-            padded_matrix[:current_size, :current_size] = tensor
-        else:
-            padded_matrix = tensor
-        padded_dm.append(padded_matrix)
 
     # Stack tensors
     batch_data = torch.stack(padded_data, dim=0)
     batch_labels = torch.stack(label_tensors, dim=0)
-    batch_dm = torch.stack(padded_dm, dim=0)
-    return batch_data, batch_labels, batch_dm
+    return batch_data, batch_labels
 
 
 class EmbedDataset(Dataset):
@@ -159,29 +146,24 @@ class EmbedDataset(Dataset):
                 base_name = os.path.splitext(filename)[0]
                 npy_path = os.path.join(data_dir, filename)
                 header_path = os.path.join(data_dir, f"{base_name}_header.txt")
-                dm_path = os.path.join(data_dir, f"{base_name}_dm.npy")
 
                 if not os.path.exists(header_path):
                     print(
                         f"Warning: Header file {header_path} not found for {npy_path}"
                     )
                     continue
-
-                if not os.path.exists(dm_path):
-                    print(f"Warning: dm file {dm_path} not found for {npy_path}")
-                    continue
-
-                self.samples.append((npy_path, header_path, dm_path))
+                self.samples.append((npy_path, header_path))
+                #self.samples.append((npy_path, header_path, dm_path))
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        npy_path, header_path, dm_path = self.samples[idx]
+        npy_path, header_path = self.samples[idx]
+       # npy_path, header_path, dm_path = self.samples[idx]
 
         # Load the numpy arrays
         data = np.load(npy_path)
-        dm_data = np.load(dm_path)
 
         # Load the annotation
         try:
@@ -196,11 +178,9 @@ class EmbedDataset(Dataset):
 
         # Convert to tensors
         data_tensor = torch.from_numpy(data).float()
-        dm_tensor = torch.from_numpy(dm_data).float()
         label_tensor = torch.tensor(label, dtype=torch.long)
 
-        return data_tensor, label_tensor, dm_tensor
-
+        return data_tensor, label_tensor
 
 def main():
     parser = argparse.ArgumentParser(description="Train your model with specific data")
@@ -314,19 +294,48 @@ def main():
             val_subset, batch_size=batch_size, shuffle=False, collate_fn=pad_collate_fn
         )
 
-        model = ECT(
+        model = SimpleEsm(
             model_name=model_name,
             output_dim=output_dim,
-            num_blocks=num_blocks,
-            n_head=n_head,
-            dropout_rate=dropout_rate,
         ).to(device)
 
         # Define criterion based on output_dim
         if output_dim == 1:
             criterion = nn.BCEWithLogitsLoss().to(device)
         elif output_dim > 1:
-            criterion = nn.CrossEntropyLoss().to(device)
+            counts = [
+            11227,  # Class 0
+            6278,   # Class 1
+            25214,  # Class 2
+            4628,   # Class 3
+            2768,   # Class 4
+            2692,   # Class 5
+            5542,   # Class 6
+            411,    # Class 7
+            27,     # Class 8
+            954,    # Class 9
+            9261,   # Class 10
+            2293,   # Class 11
+            279,    # Class 12
+            261,    # Class 13
+            175,    # Class 14
+            116,    # Class 15
+            17207,  # Class 16
+            475     # Class 17
+            ]
+            counts = np.array(counts, dtype=np.float32)
+            num_classes = len(counts)
+            total_samples = counts.sum()
+        
+            class_weights = total_samples / (num_classes * counts)
+            max_weight = class_weights.max()
+            normalized_weights = class_weights / max_weight
+            min_weight = 0.1
+            normalized_weights = np.clip(normalized_weights, min_weight, None)
+            alpha = torch.tensor(normalized_weights, dtype=torch.float32)
+            alpha = alpha.to(device)
+            criterion = FocalLoss(gamma=2, alpha=alpha).to(device)
+            
         else:
             raise ValueError(
                 "Invalid output_dim. It should be 1 for binary classification or greater than 1 for multi-class classification."
@@ -356,7 +365,7 @@ def main():
 
         # Initialize early stopping variables for this fold
         early_stopping_patience = 5
-        min_val_loss = np.Inf
+        best_f1 = -float('inf')
         patience_counter = 0
         best_model_state = None
 
@@ -377,10 +386,14 @@ def main():
             )
 
             # Early Stopping Check
-            if val_loss < min_val_loss:
-                min_val_loss = val_loss
+            if f1 > best_f1:
+                best_f1 = f1
                 patience_counter = 0
                 best_model_state = model.state_dict()
+                print(
+                    f"New best F1 score: {best_f1:.4f}. "
+                    f"Saving model and resetting patience counter."
+                )
             else:
                 patience_counter += 1
                 print(
@@ -430,9 +443,9 @@ def main():
         plt.close()
         print(f"Loss plot saved to {plot_save_path}")
 
-        print(
-            f"Cross-validation complete for fold {fold+1}. Validation Loss = {min_val_loss:.4f}"
-        )
+    #    print(
+    #        f"Cross-validation complete for fold {fold+1}. Validation Loss = {min_val_loss:.4f}"
+    #    )
         print("--------------------------------------------------------\n")
 
     # Optionally, aggregate results across folds

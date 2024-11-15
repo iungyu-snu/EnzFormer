@@ -7,25 +7,26 @@ from torch.optim.lr_scheduler import LambdaLR
 from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
 import os
-from model import ECT
+from no_dm_model import ECT
 import numpy as np
 import logging
+from focal_loss import FocalLoss
 from sklearn.metrics import precision_score, recall_score, f1_score
-
+from tqdm import tqdm
 
 def train(model, dataloader, criterion, optimizer, device):
     model.train()
     total_loss = 0
 
-    for batch_idx, batch in enumerate(dataloader):
+    for batch_idx, batch in enumerate(tqdm(dataloader, desc="Training", total=len(dataloader))):
         if batch is None:
             continue
-        fasta_embeds, annotations, dm_embeds = batch  # Data first, labels second
+        fasta_embeds, annotations = batch  # Data first, labels second
 
         fasta_embeds = fasta_embeds.to(device)
         annotations = annotations.to(device)
         optimizer.zero_grad()
-        outputs = model(fasta_embeds, dm_embeds)
+        outputs = model(fasta_embeds)
         loss = criterion(outputs, annotations)
         loss.backward()
         optimizer.step()
@@ -47,13 +48,12 @@ def validate(model, dataloader, criterion, device, threshold):
             if batch is None:
                 continue
 
-            fasta_embeds, annotations, dm_embeds = batch
+            fasta_embeds, annotations = batch
 
             fasta_embeds = fasta_embeds.to(device)
             annotations = annotations.to(device)
-            dm_embeds = dm_embeds.to(device)
 
-            outputs = model(fasta_embeds, dm_embeds)
+            outputs = model(fasta_embeds)
             loss = criterion(outputs, annotations)
             total_loss += loss.item()
 
@@ -62,9 +62,7 @@ def validate(model, dataloader, criterion, device, threshold):
 
             # Apply threshold
             preds_thresholded = preds.clone()
-            preds_thresholded[max_probs < threshold] = (
-                -1
-            )  # Assign -1 to predictions below threshold
+            preds_thresholded[max_probs < threshold] = -1  # Assign -1 to predictions below threshold
 
             all_preds.extend(preds_thresholded.cpu().numpy())
             all_labels.extend(annotations.cpu().numpy())
@@ -110,13 +108,13 @@ def pad_collate_fn(batch):
     """
     Pads sequences in the batch to the maximum length in the batch.
     Filters out samples with zero-dimensional data tensors.
-    Assumes that each item in the batch is a tuple (data_tensor, label_tensor, dm_tensor).
+    Assumes that each item in the batch is a tuple (data_tensor, label_tensor).
     """
 
-    data_tensors, label_tensors, dm_tensors = zip(*batch)
+    data_tensors, label_tensors = zip(*batch)
 
     # Padding for sequence tensors
-    max_length = max(tensor.size(0) for tensor in data_tensors + dm_tensors)
+    max_length = max(tensor.size(0) for tensor in data_tensors)
 
     # Padding data_tensors
     padded_data = []
@@ -129,25 +127,10 @@ def pad_collate_fn(batch):
             padded_tensor = tensor
         padded_data.append(padded_tensor)
 
-    # Padding dm_tensors to the same max_length
-    PADDING_VALUE = -1e9
-    padded_dm = []
-    for tensor in dm_tensors:
-        current_size = tensor.size(0)
-        if current_size < max_length:
-            padded_matrix = torch.full(
-                (max_length, max_length), PADDING_VALUE, dtype=torch.float32
-            )
-            padded_matrix[:current_size, :current_size] = tensor
-        else:
-            padded_matrix = tensor
-        padded_dm.append(padded_matrix)
-
     # Stack tensors
     batch_data = torch.stack(padded_data, dim=0)
     batch_labels = torch.stack(label_tensors, dim=0)
-    batch_dm = torch.stack(padded_dm, dim=0)
-    return batch_data, batch_labels, batch_dm
+    return batch_data, batch_labels
 
 
 class EmbedDataset(Dataset):
@@ -159,29 +142,21 @@ class EmbedDataset(Dataset):
                 base_name = os.path.splitext(filename)[0]
                 npy_path = os.path.join(data_dir, filename)
                 header_path = os.path.join(data_dir, f"{base_name}_header.txt")
-                dm_path = os.path.join(data_dir, f"{base_name}_dm.npy")
 
                 if not os.path.exists(header_path):
-                    print(
-                        f"Warning: Header file {header_path} not found for {npy_path}"
-                    )
+                    print(f"Warning: Header file {header_path} not found for {npy_path}")
                     continue
 
-                if not os.path.exists(dm_path):
-                    print(f"Warning: dm file {dm_path} not found for {npy_path}")
-                    continue
-
-                self.samples.append((npy_path, header_path, dm_path))
+                self.samples.append((npy_path, header_path))
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        npy_path, header_path, dm_path = self.samples[idx]
+        npy_path, header_path = self.samples[idx]
 
         # Load the numpy arrays
         data = np.load(npy_path)
-        dm_data = np.load(dm_path)
 
         # Load the annotation
         try:
@@ -196,10 +171,9 @@ class EmbedDataset(Dataset):
 
         # Convert to tensors
         data_tensor = torch.from_numpy(data).float()
-        dm_tensor = torch.from_numpy(dm_data).float()
         label_tensor = torch.tensor(label, dtype=torch.long)
 
-        return data_tensor, label_tensor, dm_tensor
+        return data_tensor, label_tensor
 
 
 def main():
@@ -265,20 +239,20 @@ def main():
     dropout_rate = args.dropout_rate
     weight_decay = args.weight_decay
     save_dir = args.save_dir
+    optimizer = args.optimizer
     model_name = args.model_name
     n_head = args.n_head
+    
     threshold = args.threshold
-    data_dir = f"/nashome/uglee/EnzFormer/embed_data/{model_name}"
+    data_dir = f"/nashome/uglee/EnzFormer/new_embed_data/{model_name}"
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.nogpu else "cpu"
     )
     k_folds = 5
     os.makedirs(save_dir, exist_ok=True)
-    
-    
 
     # ========
-    #Data processing
+    # Data processing
     print(f"Building Dataset from {data_dir}........................")
     dataset = EmbedDataset(data_dir)
     if len(dataset) == 0:
@@ -291,15 +265,14 @@ def main():
     fold_results = []
     train_losses_all_folds = []
     val_losses_all_folds = []
+    val_f1_scores_all_folds = []
 
     print("Training starts")
     for fold, (train_indices, val_indices) in enumerate(kf.split(dataset)):
+        # Remove or adjust this line if you want to train all folds
         if fold != 0:
-            continue
-        
-        
-        
-        
+             continue
+
         print(f"FOLD {fold+1}/{k_folds}")
         print("--------------------------------")
 
@@ -322,27 +295,59 @@ def main():
             dropout_rate=dropout_rate,
         ).to(device)
 
-        # Define criterion based on output_dim
+
+        # Define optimizer
+            # Criterion
         if output_dim == 1:
             criterion = nn.BCEWithLogitsLoss().to(device)
         elif output_dim > 1:
-            criterion = nn.CrossEntropyLoss().to(device)
+            counts = [
+                11227,  # Class 0
+                6278,   # Class 1
+                25214,  # Class 2
+                4628,   # Class 3
+                2768,   # Class 4
+                2692,   # Class 5
+                5542,   # Class 6
+                411,    # Class 7
+                27,     # Class 8
+                954,    # Class 9
+                9261,   # Class 10
+                2293,   # Class 11
+                279,    # Class 12
+                261,    # Class 13
+                175,    # Class 14
+                116,    # Class 15
+                17207,  # Class 16
+                475     # Class 17
+            ]
+            counts = np.array(counts, dtype=np.float32)
+            num_classes = len(counts)
+            total_samples = counts.sum()
+
+            class_weights = total_samples / (num_classes * counts)
+            max_weight = class_weights.max()
+            normalized_weights = class_weights / max_weight
+            min_weight = 0.1
+            normalized_weights = np.clip(normalized_weights, min_weight, None)
+            alpha = torch.tensor(normalized_weights, dtype=torch.float32)
+            alpha = alpha.to(device)
+            criterion = FocalLoss(gamma=2, alpha=alpha).to(device)
+
         else:
             raise ValueError(
-                "Invalid output_dim. It should be 1 for binary classification or greater than 1 for multi-class classification."
+                "Invalid output_dim. It should be 2 for binary classification or greater than 2 for multi-class classification."
             )
 
-        # Define optimizer
-        if args.optimizer == "Adam":
+    # Optimizer
+        if optimizer == "Adam":
             optimizer = optim.Adam(
                 model.parameters(), lr=learning_rate, weight_decay=weight_decay
             )
-        elif args.optimizer == "AdamW":
+        elif optimizer == "AdamW":
             optimizer = optim.AdamW(
                 model.parameters(), lr=learning_rate, weight_decay=weight_decay
             )
-        else:
-            raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
         # Define scheduler with warm-up and decay
         warmup_steps = 5
@@ -352,16 +357,18 @@ def main():
                 return float(epoch + 1) / float(max(1, warmup_steps))
             return 0.95 ** (epoch - warmup_steps + 1)
 
+
         scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
 
         # Initialize early stopping variables for this fold
         early_stopping_patience = 5
-        min_val_loss = np.Inf
+        max_val_f1 = -np.Inf  # Initialize to negative infinity since we are maximizing
         patience_counter = 0
         best_model_state = None
 
         fold_train_losses = []
         fold_val_losses = []
+        fold_val_f1_scores = []
 
         for epoch in range(num_epochs):
             avg_loss = train(model, train_dataloader, criterion, optimizer, device)
@@ -370,15 +377,16 @@ def main():
                 model, val_dataloader, criterion, device, threshold
             )
             fold_val_losses.append(val_loss)
+            fold_val_f1_scores.append(f1)
 
             print(
                 f"Epoch [{epoch+1}/{num_epochs}], Training Loss: {avg_loss:.4f}, Validation Loss: {val_loss:.4f}, "
                 f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}"
             )
 
-            # Early Stopping Check
-            if val_loss < min_val_loss:
-                min_val_loss = val_loss
+            # Early Stopping Check based on F1 score
+            if f1 > max_val_f1:
+                max_val_f1 = f1
                 patience_counter = 0
                 best_model_state = model.state_dict()
             else:
@@ -387,7 +395,7 @@ def main():
                     f"Early stopping counter: {patience_counter} / {early_stopping_patience}"
                 )
                 if patience_counter >= early_stopping_patience:
-                    print("Early stopping triggered due to lack of improvement.")
+                    print("Early stopping triggered due to lack of F1 score improvement.")
                     break
 
             scheduler.step()
@@ -397,7 +405,7 @@ def main():
         if best_model_state is not None:
             model_save_path = os.path.join(
                 save_dir,
-                f"{model_name}_fold{fold+1}_blocks{num_blocks}_lr{learning_rate}_dropout{dropout_rate}_wd{weight_decay}_earlystopped.pth",
+                f"{model_name}_fold{fold+1}_blocks{num_blocks}_lr{learning_rate}_dropout{dropout_rate}_wd{weight_decay}_best_f1.pth",
             )
             torch.save(best_model_state, model_save_path)
             print(f"Best model saved to {model_save_path}")
@@ -411,15 +419,16 @@ def main():
 
         train_losses_all_folds.append(fold_train_losses)
         val_losses_all_folds.append(fold_val_losses)
+        val_f1_scores_all_folds.append(fold_val_f1_scores)
 
         # Plotting for this fold
         plt.figure()
         plt.plot(fold_train_losses, label=f"Fold {fold+1} Training Loss")
         plt.plot(fold_val_losses, label=f"Fold {fold+1} Validation Loss")
-
-        plt.title(f"Training and Validation Loss for {model_name}_Fold{fold+1}")
+        plt.plot(fold_val_f1_scores, label=f"Fold {fold+1} Validation F1 Score")
+        plt.title(f"Training and Validation Metrics for {model_name}_Fold{fold+1}")
         plt.xlabel("Epochs")
-        plt.ylabel("Loss")
+        plt.ylabel("Metrics")
         plt.legend()
 
         plot_save_path = os.path.join(
@@ -428,10 +437,10 @@ def main():
         )
         plt.savefig(plot_save_path)
         plt.close()
-        print(f"Loss plot saved to {plot_save_path}")
+        print(f"Metrics plot saved to {plot_save_path}")
 
         print(
-            f"Cross-validation complete for fold {fold+1}. Validation Loss = {min_val_loss:.4f}"
+            f"Cross-validation complete for fold {fold+1}. Best Validation F1 Score = {max_val_f1:.4f}"
         )
         print("--------------------------------------------------------\n")
 
@@ -439,16 +448,17 @@ def main():
     if k_folds > 1:
         avg_train_losses = np.mean(train_losses_all_folds, axis=0)
         avg_val_losses = np.mean(val_losses_all_folds, axis=0)
+        avg_val_f1_scores = np.mean(val_f1_scores_all_folds, axis=0)
 
         plt.figure()
         plt.plot(avg_train_losses, label="Average Training Loss")
         plt.plot(avg_val_losses, label="Average Validation Loss")
-
+        plt.plot(avg_val_f1_scores, label="Average Validation F1 Score")
         plt.title(
-            f"Average Training and Validation Loss across {k_folds} Folds for {model_name}"
+            f"Average Training and Validation Metrics across {k_folds} Folds for {model_name}"
         )
         plt.xlabel("Epochs")
-        plt.ylabel("Loss")
+        plt.ylabel("Metrics")
         plt.legend()
 
         aggregate_plot_save_path = os.path.join(
@@ -457,8 +467,9 @@ def main():
         )
         plt.savefig(aggregate_plot_save_path)
         plt.close()
-        print(f"Aggregate loss plot saved to {aggregate_plot_save_path}")
+        print(f"Aggregate metrics plot saved to {aggregate_plot_save_path}")
 
 
 if __name__ == "__main__":
     main()
+
