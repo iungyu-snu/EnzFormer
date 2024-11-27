@@ -3,12 +3,13 @@ import torch
 import glob
 from colorama import Fore, Style, init
 init(autoreset=True)
-from no_dm_model import ECT
+from no_dm_model_eval import ECT
 import os
 import sys
 import subprocess
 import numpy as np
 import torch.nn.functional as F
+from captum.attr import IntegratedGradients
 
 enzyme_dict = {
     0: "4.4.1.1",
@@ -68,6 +69,12 @@ def main():
     ).to(device)
     model.load_state_dict(torch.load(args.model_checkpoint, map_location=device))
     model.eval()
+    
+    ##### ADDING
+    ig = IntegratedGradients(model)
+    
+    
+    
 
     # Get FASTA files
     fasta_files = (
@@ -85,6 +92,8 @@ def main():
         npy_tensor = torch.from_numpy(np.load(npy_file)).float().unsqueeze(0).to(device)
         npy_tensor.requires_grad = True
         output = model(npy_tensor).to(device)
+
+
         output = F.softmax(output, dim=1)
         torch.set_printoptions(sci_mode=False, precision=6)
         max_values, max_indices = torch.max(output, dim=1)
@@ -93,8 +102,24 @@ def main():
         max_value = max_values.item()
             
 
-
+        
+        
         name=os.path.splitext(os.path.basename(fasta_file))[0]
+        
+        ############ ADDING
+        baseline = torch.zeros_like(npy_tensor).to(device)
+        attributions = ig.attribute(
+            npy_tensor,
+            baselines=baseline,
+            target=max_index,
+        )
+        
+        
+        
+        
+        
+        
+        
         model.zero_grad()
         # Only choose first batch's max_index 
         output[0, max_index].backward()
@@ -104,7 +129,7 @@ def main():
         # calculate the embedding vectors to one scalar.
         grad_magnitudes = np.linalg.norm(gradients, axis=1)
         normalized_grad_magnitudes = grad_magnitudes / np.sum(grad_magnitudes)
-        top_5_indices = np.argsort(normalized_grad_magnitudes)[-30:][::-1] 
+        top_5_indices = np.argsort(normalized_grad_magnitudes)[-5:][::-1] 
         top_5_probs = normalized_grad_magnitudes[top_5_indices]  
 
         for i, (index, prob) in enumerate(zip(top_5_indices, top_5_probs), start=1):
