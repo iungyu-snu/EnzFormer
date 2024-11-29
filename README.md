@@ -2,6 +2,7 @@
 1. The model uses META's ESM as the embedding model and transformer architecture as the enzyme classifier 
 2. The purpose of the model is to look at the FASTA file and classify the enzymes 
 3. We have prepared the code to train it, so let's train it!
+4. Beyond categorization, there is also the purpose of evaluating for point mutations
 
 ![Screenshot](images/screenshot.png)
 ## How to use
@@ -41,6 +42,14 @@ usage: evaluate [-h] [--nogpu]
                 model_location fasta_path model_checkpoint output_dim
                 num_blocks
 ```
+
+### Performance for EC num 4.4.1.x
+
+#### Fine tuning result
+![Screenshot](images/finetuning.png)
+#### Point mutation result
+![Screenshot](images/results.png)
+
 
 
 
