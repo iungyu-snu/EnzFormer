@@ -1,4 +1,7 @@
 *data*
-results
+*results*
 *.pyc
 *test*
+*log*
+*phytase*
+extracted_tensors
