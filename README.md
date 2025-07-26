@@ -17,6 +17,9 @@ If you use this code or our findings in your research, please cite our paper:
 
 > Ungyu Lee, and Nam-Chul Ha. (2025). "Enhancing MccB Enzyme Activity via LLM-Guided Labeling and ESMC-Transformer Integration for Targeted Point Mutation Design". *Journal Name*, vol(issue), pages.
 
+## References
+- [ESMC-600M-2024-12](https://huggingface.co/EvolutionaryScale/esmc-600m-2024-12)
+
 ## Workflow
 
 ![EnzFormer Workflow](images/1.png)
