@@ -1,3 +1,4 @@
+# 1. 대용량·바이너리·로그 등 전역 규칙
 *data*
 *results*
 *.pyc
@@ -5,5 +6,11 @@
 *log*
 *phytase*
 extracted_tensors
+
+# 2. new_embed_data 전체는 무시
+new_embed_data/*
+
+# 3. 단, new5data 폴더와 특정 파일만 예외
 !new_embed_data/new5data/
 !new_embed_data/new5data/600M_4411_three.dvc
+!new_embed_data/new5data/.gitignore

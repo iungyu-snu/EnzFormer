@@ -1,4 +1,9 @@
 [core]
-    remote = gdrive
+    remote = gdrive_remote
 ['remote "gdrive"']
     url = gdrive://1qFgSEMAm-PAmkEy7r-SVHIcslDBXXMmK
+['remote "gdrive_remote"']
+    url = gdrive://1qFgSEMAm-PAmkEy7r-SVHIcslDBXXMmK
+    gdrive_use_service_account = false
+    gdrive_service_account_json_file_path = /nashome/uglee/neon-poetry-467105-v3-ca51bfbc9ac0.json
+    gdrive_service_account_user_email = enzformer@neon-poetry-467105-v3.iam.gserviceaccount.com
