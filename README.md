@@ -1,4 +1,4 @@
-# EnzFormer: Enhancing Enzyme Activity via LLM-Guided Labeling and ESMC-Transformer Integration
+# EnzFormer: A Specialized ESMC-Transformer for L-cystathionine γ-lyase (CGL) Engineering and Its Structural Interpretation
 
 EnzFormer is a deep learning pipeline for targeted enzyme optimization. This project presents an AI-driven framework that integrates data labeling using large language models (LLMs) with a Transformer-based deep learning model. The model is fine-tuned using protein sequence embeddings from Evolutionary Scale Modeling-Cambrian (ESM-C) to capture sequence-function relationships and guide the design of point mutations for enhanced enzymatic activity.
 
@@ -7,15 +7,12 @@ This repository contains the code for the paper: **"Enhancing MccB Enzyme Activi
 ![EnzFormer Architecture](images/2.png)
 *Figure: The EnzFormer model architecture, which processes ESMC embeddings through a Transformer encoder to predict enzyme activity.*
 
-## Abstract
-
-Enzyme engineering presents significant potential for diverse industrial applications but remains hindered by the limitations inherent in random mutagenesis approaches, particularly for enzymes exhibiting evolutionary saturation, such as L-cystathionine γ-lyase (MccB). To address this challenge, we developed a novel artificial intelligence-driven pipeline designed for targeted enzyme optimization. Our approach integrates extensive data labeling facilitated by the contextual reasoning capabilities of GPT-4o with a Transformer-based deep learning model fine-tuned using protein sequence embeddings from Evolutionary Scale Modeling-Cambrian (ESM-C). This model effectively captures the nuanced sequence-function relationships specific to MccB, thereby enabling efficient in silico screening of extensive mutation libraries. Through this method, we successfully identified and experimentally validated the V129G variant, which demonstrated a statistically significant increase (~14%) in total enzymatic activity relative to the wild-type enzyme. Our findings underscore the viability and effectiveness of AI-assisted strategies for rational enzyme enhancement, offering substantial promise for broader applications in enzyme engineering.
 
 ## Citation
 
 If you use this code or our findings in your research, please cite our paper:
 
-> Ungyu Lee, and Nam-Chul Ha. (2025). "Enhancing MccB Enzyme Activity via LLM-Guided Labeling and ESMC-Transformer Integration for Targeted Point Mutation Design". *Journal Name*, vol(issue), pages.
+> Ungyu Lee, Minho Park, and Nam-Chul Ha. (2025). "A Specialized ESMC-Transformer for L-cystathionine γ-lyase (CGL) Engineering and Its Structural Interpretation". *Journal Name*, vol(issue), pages.
 
 ## References
 - [ESMC-600M-2024-12](https://huggingface.co/EvolutionaryScale/esmc-600m-2024-12)
