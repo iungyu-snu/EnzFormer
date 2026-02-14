@@ -1,6 +1,6 @@
 #!/bin/bash
 
-source /home/uglee/miniconda3/bin/activate /home/uglee/miniconda3/envs/training
+source /home/uglee/miniconda3/bin/activate /home/uglee/miniconda3/envs/enzformer_mccb
 # run_training.sh
 
 # Exit immediately if a command exits with a non-zero status
@@ -13,14 +13,14 @@ set -eo pipefail
 
 # The name of the ESM BERT model: [8M, 35M, 150M, 650M, 3B, 15B]
 MODEL_NAME="600M"
-SAVE_DIR="/nashome/uglee/EnzFormer/results/5data/three_cgl_poster"
+SAVE_DIR="/nashome/uglee/EnzFormer/results/"
 OUTPUT_DIM=3
 NUM_BLOCKS=5
 BATCH_SIZE=16
 LEARNING_RATE=0.0002
 NUM_EPOCHS=50
-DROPOUT_RATE=0.1    # Dropout rate to use (default is 0.1)
-WEIGHT_DECAY=0.00002     # Weight decay value for optimizer (default is 0.00001)
+DROPOUT_RATE=0.1   
+WEIGHT_DECAY=0.00002    
 N_HEAD=16
 THRESHOLD=0.55
 OPTIMIZER="Adam"

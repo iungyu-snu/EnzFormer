@@ -1,4 +1,4 @@
-name: training
+name: enzformer_mccb
 channels:
   - pytorch
   - nvidia

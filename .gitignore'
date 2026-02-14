@@ -1,0 +1,9 @@
+# 1. 대용량·바이너리·로그 등 전역 규칙
+*data*
+*results*
+*.pyc
+*test*
+*log*
+*phytase*
+extracted_tensors
+
