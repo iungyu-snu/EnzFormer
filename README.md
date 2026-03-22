@@ -1,4 +1,4 @@
-# EnzFormer: A Specialized ESMC-Transformer for L-cystathionine γ-lyase (CGL) Engineering and Its Structural Interpretation
+# Family-Specialized Transformer for L-cystathionine Gamma-lyase Engineering and Its Structural Interpretation
 
 EnzFormer is a deep learning workflow for targeted enzyme engineering. The study combines GPT-4o-assisted labeling of CGL homologs with an ESMC embedding pipeline and a Transformer classifier to prioritize activity-enhancing point mutations.
 
@@ -15,7 +15,7 @@ EnzFormer is a deep learning workflow for targeted enzyme engineering. The study
 
 If you use this code or the reported findings, please cite the paper:
 
-> Ungyu Lee, Minho Park, and Nam-Chul Ha. (2025). "A Specialized ESMC-Transformer for L-cystathionine γ-lyase (CGL) Engineering and Its Structural Interpretation". *Journal Name*, vol(issue), pages.
+> Ungyu Lee, Minho Park, and Nam-Chul Ha. (2025). "Family-Specialized Transformer for L-cystathionine Gamma-lyase Engineering and Its Structural Interpretation". *Journal Name*, vol(issue), pages.
 
 ## References
 
